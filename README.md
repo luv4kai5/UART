@@ -90,3 +90,131 @@ The UART transmitter is controlled using a Finite State Machine (FSM) that defin
 
 * **Baud Counter:** Counts system-clock cycles until one UART bit period is completed. It resets after reaching its limit.
 * **Bit Counter:** Tracks the current data bit (0 to 7) and advances whenever one bit period is completed.
+
+### Tx FSM
+State Machine: uart_tx
+
+┌─────────────────────────────────────────────────────────────┐
+│                                                             │
+│  ┌──────────┐                                              │
+│  │  IDLE    │ (State: 2'b00)                              │
+│  │ TX = 1   │                                              │
+│  └────┬─────┘                                              │
+│       │                                                     │
+│       │ tx_start = 1                                       │
+│       │ Load data_register                                 │
+│       │ Reset counters                                     │
+│       ▼                                                     │
+│  ┌──────────────┐                                          │
+│  │   START      │ (State: 2'b01)                          │
+│  │ TX = 0       │                                          │
+│  └────┬─────────┘                                          │
+│       │                                                     │
+│       │ baud_counter == BAUD_LIMIT                         │
+│       │ Reset baud_counter                                 │
+│       ▼                                                     │
+│  ┌──────────────────┐                                      │
+│  │      DATA        │ (State: 2'b10)                      │
+│  │ TX = data[bit]   │                                      │
+│  └────┬─────────────┘                                      │
+│       │                                                     │
+│       │ Every BAUD_LIMIT cycles:                           │
+│       │ - bit_counter++                                    │
+│       │ - Reset baud_counter                               │
+│       │                                                     │
+│       │ When bit_counter == 8                              │
+│       ▼                                                     │
+│  ┌──────────┐                                              │
+│  │  STOP    │ (State: 2'b11)                              │
+│  │ TX = 1   │                                              │
+│  └────┬─────┘                                              │
+│       │                                                     │
+│       │ baud_counter == BAUD_LIMIT                         │
+│       │ Reset counters                                     │
+│       │                                                     │
+│       └─────────────────────────────────────┐              │
+│                                             │              │
+│                                             ▼              │
+│                                        ┌──────────┐        │
+│                                        │  IDLE    │        │
+│                                        └──────────┘        │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+Timing:
+- Each bit period = BAUD_LIMIT clock cycles
+- START bit: 1 × BAUD_LIMIT cycles
+- DATA bits: 8 × BAUD_LIMIT cycles
+- STOP bit: 1 × BAUD_LIMIT cycles
+- Total frame: 10 × BAUD_LIMIT cycles (~1.04 ms @ 9600 baud)
+
+Data Format (8-N-1):
+START(0) | D0 D1 D2 D3 D4 D5 D6 D7 | STOP(1)
+         └────────────────────────┘
+            LSB-first transmission
+### Rx FSM
+State Machine: uart_rx
+
+┌─────────────────────────────────────────────────────────────┐
+│                                                             │
+│  ┌──────────┐                                              │
+│  │  IDLE    │ (State: 2'b00)                              │
+│  │ rx_valid=0│                                             │
+│  └────┬─────┘                                              │
+│       │                                                     │
+│       │ Falling edge detected (TX: 1→0)                    │
+│       │ Reset counters                                     │
+│       ▼                                                     │
+│  ┌─────────────────┐                                       │
+│  │ DETECT_START    │ (State: 2'b01)                       │
+│  │ Waiting...      │                                       │
+│  └────┬────────────┘                                       │
+│       │                                                     │
+│       │ baud_counter == (1.5 × BAUD_LIMIT)                │
+│       │ Sample first data bit                              │
+│       │ rx_data[bit_counter] = rx                          │
+│       │ Reset baud_counter                                 │
+│       │ bit_counter++                                      │
+│       ▼                                                     │
+│  ┌──────────────────┐                                      │
+│  │      DATA        │ (State: 2'b10)                      │
+│  │ Sampling bits... │                                      │
+│  └────┬─────────────┘                                      │
+│       │                                                     │
+│       │ Every BAUD_LIMIT cycles (after 1st):              │
+│       │ - Sample rx_data[bit_counter] = rx                 │
+│       │ - bit_counter++                                    │
+│       │ - Reset baud_counter                               │
+│       │                                                     │
+│       │ When bit_counter == 8 (all bits sampled)           │
+│       ▼                                                     │
+│  ┌──────────────┐                                          │
+│  │    STOP      │ (State: 2'b11)                          │
+│  │ Verify STOP  │                                          │
+│  └────┬─────────┘                                          │
+│       │                                                     │
+│       │ baud_counter == BAUD_LIMIT                         │
+│       │ if (rx == 1)  ← STOP bit validation                │
+│       │   rx_valid = 1 (pulse for 1 cycle)                 │
+│       │ Reset counters                                     │
+│       │                                                     │
+│       └─────────────────────────────────┐                  │
+│                                         │                  │
+│                                         ▼                  │
+│                                    ┌──────────┐            │
+│                                    │  IDLE    │            │
+│                                    └──────────┘            │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+Timing:
+- Detects falling edge on RX line
+- Waits 1.5 × BAUD_LIMIT before sampling first bit (middle of bit)
+- Then samples every BAUD_LIMIT cycles
+- Validates STOP bit (must be HIGH)
+- Total reception: ~1.04 ms @ 9600 baud
+
+Sampling Points:
+START | D0 D1 D2 D3 D4 D5 D6 D7 | STOP
+ ↓    | ↓  ↓  ↓  ↓  ↓  ↓  ↓  ↓  | ↓
+1.5x  | 1x 1x 1x 1x 1x 1x 1x 1x | 1x  (in BAUD_LIMIT cycles)
