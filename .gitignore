@@ -1,0 +1,27 @@
+# Simulation build outputs and logs
+*.sim
+*.vcd
+
+# Common Verilog/FPGA simulation artifacts
+*.vvp
+*.out
+*.log
+*.jou
+*.wdb
+*.pb
+
+# Simulator working directories
+xsim.dir/
+csrc/
+simv.daidir/
+work/
+work-obj93.cf*.sim
+*.vcd
+*.vvp
+*.out
+*.log
+xsim.dir/
+csrc/
+simv.daidr/
+work/
+*sim

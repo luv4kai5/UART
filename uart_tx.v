@@ -5,7 +5,7 @@ input clk, tx_start,rst;
 //which tells to start the transmission of data.
 input [7:0] tx_data;
 //the 8 data bit the transmitter wants to send serially to reciever
-output tx;
+output reg tx;
  //the tx line, which has one bit at a time (since its a serial communication)
 
 reg [1:0]state; //remembers which state the transmitter is in.
@@ -13,9 +13,11 @@ parameter IDLE=2'b00,
           START=2'b01,
           DATA=2'b10,
           STOP=2'b11,
-          BAUD_LIMIT = 5207;
+          CLK_FREQ = 100_000_000,  // 100 MHz
+          BAUD_RATE = 9600,
+          BAUD_LIMIT = (CLK_FREQ / BAUD_RATE) - 1;
 
-reg[12:0]baud_counter;
+reg[13:0]baud_counter;
 //counts system-clock cycles within one UART bit period
 //13 bits because 2^13=8162 qen 50MHz/9600 ~ 5208
 reg[2:0]bit_counter;
@@ -24,7 +26,8 @@ reg[7:0]data_register;
 //to hold the byte we are transmitting since halway through the external circuit may change
 always @(posedge clk)
 begin
-
+    if(rst)
+    begin
 //reset basically resets the transmission line, brings the counter to idle state.
         state<=IDLE;
         baud_counter<=0;
@@ -58,6 +61,7 @@ begin
     START:
     begin
         tx<=0;
+        baud_counter<=baud_counter+1;
         if(baud_counter==BAUD_LIMIT)
         begin
             state<=DATA;
@@ -70,6 +74,7 @@ begin
     DATA:
     begin
         tx<=data_register[bit_counter];
+        baud_counter<=baud_counter+1;
         if(baud_counter==BAUD_LIMIT)
         begin
         baud_counter<=0;
@@ -90,6 +95,7 @@ begin
     STOP:
     begin
         tx<=1;
+        baud_counter<=baud_counter+1;
         if(baud_counter==BAUD_LIMIT)
         begin 
             baud_counter<=0;     
@@ -103,5 +109,6 @@ begin
         state<=IDLE;
     end
     endcase
+end
 end
 endmodule
